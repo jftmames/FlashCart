@@ -1,105 +1,97 @@
 import streamlit as st
 import time
 import json
+import pandas as pd
 from datetime import datetime
+import sys # Para medir el tamaño real en bytes
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
-st.set_page_config(page_title="FlashCart: Motor Clave-Valor", layout="wide")
+st.set_page_config(page_title="FlashCart: Analítica de Memoria", layout="wide")
 
-st.title("⚡ FlashCart Analytics")
-st.subheader("Simulador de Base de Datos Key-Value con TTL")
+st.title("⚡ FlashCart Pro: Almacenamiento y Analítica NoSQL")
+st.caption("Simulador de alto rendimiento Clave-Valor con monitoreo de carga")
 
-# --- 1. INICIALIZACIÓN DEL ALMACÉN (SIMULANDO REDIS/MEMORIA RAM) ---
+# --- 1. INICIALIZACIÓN ---
 if 'kv_store' not in st.session_state:
     st.session_state.kv_store = {}
 
-# --- 2. LÓGICA DE LIMPIEZA POR EXPIRACIÓN (TTL) ---
 def cleanup_expired():
     now = time.time()
-    # Definimos el tiempo de vida (TTL) en 60 segundos
     ttl = 60 
-    keys_to_delete = [
-        k for k, v in st.session_state.kv_store.items() 
-        if now - v['timestamp'] > ttl
-    ]
+    keys_to_delete = [k for k, v in st.session_state.kv_store.items() if now - v['timestamp'] > ttl]
     for k in keys_to_delete:
         del st.session_state.kv_store[k]
     return len(keys_to_delete)
 
-# --- 3. INTERFAZ: GESTIÓN DE DATOS ---
-col_input, col_monitor = st.columns([1, 1])
+# --- 2. INTERFAZ ---
+col_input, col_monitor = st.columns([1, 1.2])
 
 with col_input:
-    st.header("📥 Entrada de Datos (SET)")
-    
+    st.header("📥 Gestión de Sesiones")
     with st.form("set_data"):
-        key = st.text_input("ID del Cliente (Key)", placeholder="user_123")
+        key = st.text_input("ID Cliente (Clave)", placeholder="cliente_vip_01")
+        items = st.text_area("JSON de Carrito", value='{"camisa": 2, "pantalon": 1, "zapatos": 1}')
+        total = st.number_input("Valor Total ($)", min_value=0.0, value=250.0)
         
-        st.write("Datos del Carrito (Value - Formato JSON)")
-        items = st.text_area("Productos", value='["Laptop", "Mouse"]', help="Escribe una lista en formato JSON")
-        total = st.number_input("Total Compra ($)", min_value=0.0, value=1200.0)
-        
-        submitted = st.form_submit_button("Guardar en Caché")
-        
-        if submitted:
+        if st.form_submit_button("Guardar en Caché"):
             if key:
-                # Creamos el valor como un objeto flexible
-                value_object = {
-                    "data": {
-                        "productos": json.loads(items) if items else [],
-                        "total": total
-                    },
-                    "timestamp": time.time(),
-                    "time_readable": datetime.now().strftime("%H:%M:%S")
-                }
-                # Operación de escritura (SET) O(1)
-                st.session_state.kv_store[key] = value_object
-                st.success(f"✅ Clave '{key}' guardada exitosamente.")
-            else:
-                st.error("La clave no puede estar vacía.")
+                try:
+                    data_obj = json.loads(items)
+                    entry = {
+                        "data": data_obj,
+                        "total": total,
+                        "timestamp": time.time(),
+                        "time_readable": datetime.now().strftime("%H:%M:%S"),
+                        "size_bytes": sys.getsizeof(items) + sys.getsizeof(total)
+                    }
+                    st.session_state.kv_store[key] = entry
+                    st.success(f"Dato '{key}' almacenado.")
+                except:
+                    st.error("Error: El formato JSON de productos no es válido.")
 
     st.divider()
-    
-    st.header("🔍 Recuperación (GET)")
-    search_key = st.text_input("Buscar por ID de Cliente")
-    if st.button("Consultar"):
-        # Operación de lectura (GET) O(1) - Velocidad instantánea
-        result = st.session_state.kv_store.get(search_key)
-        if result:
-            st.json(result["data"])
-            st.info(f"Dato guardado a las: {result['time_readable']}")
+    st.header("🔍 Consulta Rápida")
+    search = st.text_input("Ingresar ID para búsqueda instantánea")
+    if search:
+        res = st.session_state.kv_store.get(search)
+        if res:
+            st.json(res["data"])
+            st.metric("Total Carrito", f"{res['total']} $")
         else:
-            st.warning("Clave no encontrada o expirada.")
+            st.warning("Clave no encontrada.")
 
 with col_monitor:
-    st.header("📊 Monitor de Memoria")
+    st.header("📊 Monitor de Infraestructura")
     
-    # Botón de limpieza manual (Simulando el proceso de TTL de NoSQL)
-    if st.button("🧹 Ejecutar Limpieza TTL (Borrar expirados)"):
-        eliminados = cleanup_expired()
-        st.write(f"Sesiones limpiadas: {eliminados}")
-    
-    # Visualización del almacén de datos
+    # Acción de limpieza
+    if st.button("🧹 Limpiar Sesiones Expiradas (TTL)"):
+        cleanup_expired()
+        st.rerun()
+
     if st.session_state.kv_store:
-        # Transformamos para mostrar en tabla
-        display_data = []
+        # Preparar datos para la tabla y gráfico
+        df_list = []
         for k, v in st.session_state.kv_store.items():
             age = int(time.time() - v['timestamp'])
-            display_data.append({
-                "Key (ID)": k,
-                "Creado": v['time_readable'],
-                "Antigüedad": f"{age} seg",
-                "Estado": "🔥 Activo" if age <= 60 else "💀 Expirado (Pendiente de limpieza)"
+            df_list.append({
+                "Cliente": k,
+                "Antigüedad (s)": age,
+                "Tamaño (Bytes)": v['size_bytes'],
+                "Estado": "Activo" if age <= 60 else "Expirado"
             })
         
-        st.table(display_data)
-    else:
-        st.info("El almacén está vacío.")
+        df = pd.DataFrame(df_list)
 
-# --- 4. EXPLICACIÓN TEÓRICA ---
-with st.expander("❓ ¿Qué está pasando aquí detrás?"):
-    st.write("""
-    1. **Acceso O(1):** No importa si hay 10 o 10 millones de carritos. Buscar por clave siempre tarda lo mismo.
-    2. **Estructura Flexible:** El campo 'Productos' es una lista JSON que puede cambiar sin alterar una tabla.
-    3. **TTL (Time To Live):** En Big Data, los carritos no se guardan para siempre. Si el usuario no compra en un tiempo X, el dato se auto-elimina para ahorrar RAM.
-    """)
+        # Métrica de carga total
+        total_mem = df["Tamaño (Bytes)"].sum()
+        st.metric("Carga Total en Memoria RAM", f"{total_mem} Bytes")
+
+        # Gráfico de consumo por clave
+        st.subheader("Consumo de Memoria por Sesión")
+        st.bar_chart(df.set_index("Cliente")["Tamaño (Bytes)"])
+
+        # Tabla de estado
+        st.subheader("Detalle de las Claves")
+        st.dataframe(df, use_container_width=True)
+    else:
+        st.info("No hay datos en el almacén de memoria.")
